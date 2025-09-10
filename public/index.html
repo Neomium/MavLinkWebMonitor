@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MAVLink Message Monitor</title>
+  <style>
+    body {
+      background-color: #111;
+      color: #eee;
+      font-family: monospace;
+      padding: 1em;
+    }
+    h1 {
+      color: #0ff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1em;
+      table-layout: fixed;
+      word-wrap: break-word;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 5px;
+      vertical-align: top;
+    }
+    th {
+      background-color: #222;
+    }
+    td {
+      background-color: #1a1a1a;
+    }
+    .label {
+      font-weight: bold;
+      color: #0ff;
+    }
+    .timestamp {
+      color: #999;
+      font-size: 0.9em;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>🛰️ MAVLink Live Monitor</h1>
+  <input
+  type="text"
+  id="filterInput"
+  placeholder="🔍 Filter by message name..."
+  style="padding: 5px; font-size: 1em; width: 300px; margin-bottom: 1em;"
+  />
+  <table>
+  <thead>
+  <tr>
+    <th style="width: 15%">Msg Name</th>
+    <th style="width: 8%">Comp</th>
+    <th style="width: 12%">Time</th>
+    <th style="width: 55%">Data</th>
+    <th style="width: 10%">Count</th>
+  </tr>
+</thead>
+  <tbody id="msgTable">
+    <!-- Rows will be inserted here -->
+  </tbody>
+</table>
+
+<script>
+  const ws = new WebSocket('ws://127.0.0.1:3001');
+  const msgTable = document.getElementById('msgTable');
+  const rows = {};
+  let currentFilter = '';
+  const msgCounts = {};
+
+  function formatFields(msg) {
+    const fields = msg.fieldnames || [];
+    return fields.map(field => `${field}: ${msg[field]}`).join('\n');
+  }
+
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch (e) {
+      console.error('Invalid JSON from server:', e);
+      return;
+    }
+
+    const id = msg.header?.msgId ?? '??';
+    const name = msg.name.replaceAll('\x00','') || `ID_${id}`;
+    const srcComp = msg.srcComponent ?? msg.header?.srcComponent ?? '??';
+    const sysId = msg.header?.srcSystem ?? '??';
+    const key = `${id}_${name}_${srcComp}`;
+    const timestamp = new Date().toLocaleTimeString();
+
+    msgCounts[key] = (msgCounts[key] || 0) + 1;
+    const count = msgCounts[key];
+
+    const formatted = formatFields(msg);
+
+    if (!rows[key]) {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td class="label" id="${key}_name">${name}</td>
+        <td id="${key}_comp">${srcComp}</td>
+        <td class="timestamp" id="${key}_time">${timestamp}</td>
+        <td><pre id="${key}_data">${formatted}</pre></td>
+        <td id="${key}_count">${count}</td>
+      `;
+      msgTable.appendChild(row);
+      rows[key] = true;
+    } else {
+      console.log(key)
+      document.getElementById(`${key}_time`).textContent = timestamp;
+      document.getElementById(`${key}_data`).textContent = formatted;
+      document.getElementById(`${key}_count`).textContent = count;
+    }
+
+    // Apply filter to this specific row
+    const rowEl = document.getElementById(`${key}_name`)?.parentElement;
+    if (rowEl) {
+
+      const nameText = name.toLowerCase();
+      const shouldShow = nameText.includes(currentFilter);
+      rowEl.style.display = shouldShow ? '' : 'none';
+    }
+  };
+
+  filterInput.addEventListener('input', () => {
+  currentFilter = filterInput.value.toLowerCase();
+  applyFilterToTable();
+});
+
+function applyFilterToTable() {
+  const rows = document.querySelectorAll('#msgTable tr');
+
+  rows.forEach(row => {
+    const nameCell = row.querySelector('td.label');
+    if (!nameCell) return;
+
+    const name = nameCell.textContent.toLowerCase();
+    const match = name.includes(currentFilter);
+    row.style.display = match ? '' : 'none';
+  });
+}
+</script>
+
+</body>
+</html>
