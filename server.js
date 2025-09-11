@@ -4,7 +4,7 @@ const WebSocket = require('ws');
 const mavlink = require('mavlinkjs/mavlink_all_v2');
 
 const HTTP_PORT = 3001;
-const MAVLINK_TCP_HOST = '127.0.0.1';
+const MAVLINK_TCP_HOST = '192.168.1.1';
 const MAVLINK_TCP_PORT = 8888;
 const RECONNECT_DELAY_MS = 100;
 
@@ -52,7 +52,7 @@ function connectTCP() {
       const messages = mav.parseBuffer(data);
       //console.log(messages)
       for (const m of messages) {
-        if(m.id > 0){
+        if(m.id > -1){
           broadcast(m);
           }
       }

@@ -90,7 +90,7 @@
     }
 
     const id = msg.header?.msgId ?? '??';
-    const name = msg.name.replaceAll('\x00','') || `ID_${id}`;
+    const name = id + '/'+ msg.name.replaceAll('\x00','') || `ID_${id}`;
     const srcComp = msg.srcComponent ?? msg.header?.srcComponent ?? '??';
     const sysId = msg.header?.srcSystem ?? '??';
     const key = `${id}_${name}_${srcComp}`;
