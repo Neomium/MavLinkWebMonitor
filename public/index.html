@@ -24,6 +24,10 @@
       border: 1px solid #333;
       padding: 5px;
       vertical-align: top;
+      cursor: default;
+    }
+    th.sortable {
+      cursor: pointer;
     }
     th {
       background-color: #222;
@@ -43,110 +47,197 @@
       margin: 0;
       white-space: pre-wrap;
     }
+    .arrow {
+      margin-left: 5px;
+      font-size: 0.8em;
+      color: #0ff;
+    }
+    input {
+      padding: 5px;
+      font-size: 1em;
+      margin-bottom: 1em;
+      background-color: #1a1a1a;
+      color: #eee;
+      border: 1px solid #333;
+    }
   </style>
 </head>
 <body>
   <h1>🛰️ MAVLink Live Monitor</h1>
+
+  <!-- Filter Inputs -->
   <input
-  type="text"
-  id="filterInput"
-  placeholder="🔍 Filter by message name..."
-  style="padding: 5px; font-size: 1em; width: 300px; margin-bottom: 1em;"
+    type="text"
+    id="filterInput"
+    placeholder="🔍 Filter by message name..."
+    style="width: 300px; margin-right: 1em;"
   />
+  <input
+    type="text"
+    id="compFilterInput"
+    placeholder="🧩 Filter by component IDs (e.g. 1, 2, 3)"
+    style="width: 300px;"
+  />
+
   <table>
-  <thead>
-  <tr>
-    <th style="width: 15%">Msg Name</th>
-    <th style="width: 8%">Comp</th>
-    <th style="width: 12%">Time</th>
-    <th style="width: 55%">Data</th>
-    <th style="width: 10%">Count</th>
-  </tr>
-</thead>
-  <tbody id="msgTable">
-    <!-- Rows will be inserted here -->
-  </tbody>
-</table>
+    <thead>
+      <tr>
+        <th class="sortable" data-key="name" style="width: 15%">Msg Name <span class="arrow"></span></th>
+        <th class="sortable" data-key="sys"  style="width: 3%">Sys <span class="arrow"></span></th>
+        <th class="sortable" data-key="comp" style="width: 3%">Comp <span class="arrow"></span></th>
+        <th class="sortable" data-key="time" style="width: 12%">Time <span class="arrow"></span></th>
+        <th style="width: 55%">Data</th>
+        <th class="sortable" data-key="count" style="width: 10%">Count / Rate (Hz) <span class="arrow"></span></th>
+      </tr>
+    </thead>
+    <tbody id="msgTable">
+      <!-- Rows inserted dynamically -->
+    </tbody>
+  </table>
 
-<script>
-  const ws = new WebSocket('ws://127.0.0.1:3001');
-  const msgTable = document.getElementById('msgTable');
-  const rows = {};
-  let currentFilter = '';
-  const msgCounts = {};
+  <script>
+    const ws = new WebSocket('ws://127.0.0.1:3001');
+    const msgTable = document.getElementById('msgTable');
+    const rows = {};
+    const msgCounts = {};
+    const lastTimestamps = {};
+    const msgRates = {};
 
-  function formatFields(msg) {
-    const fields = msg.fieldnames || [];
-    return fields.map(field => `${field}: ${msg[field]}`).join('\n');
-  }
+    let currentFilter = '';
+    let compFilterList = [];
+    let sortKey = '';
+    let sortDirection = 1; // 1 = asc, -1 = desc
 
-  ws.onmessage = (event) => {
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch (e) {
-      console.error('Invalid JSON from server:', e);
-      return;
+    function formatFields(msg) {
+      const fields = msg.fieldnames || [];
+      return fields.map(field => `${field}: ${msg[field]}`).join('\n');
     }
 
-    const id = msg.header?.msgId ?? '??';
-    const name = id + '/'+ msg.name.replaceAll('\x00','') || `ID_${id}`;
-    const srcComp = msg.srcComponent ?? msg.header?.srcComponent ?? '??';
-    const sysId = msg.header?.srcSystem ?? '??';
-    const key = `${id}_${name}_${srcComp}`;
-    const timestamp = new Date().toLocaleTimeString();
+    ws.onmessage = (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (e) {
+        console.error('Invalid JSON:', e);
+        return;
+      }
 
-    msgCounts[key] = (msgCounts[key] || 0) + 1;
-    const count = msgCounts[key];
+      const id = msg.header?.msgId ?? '??';
+      const name = id + '/' + (msg.name?.replaceAll('\x00', '') || `ID_${id}`);
+      const srcComp = msg.srcComponent ?? msg.header?.srcComponent ?? '??';
+      const sysId = msg.header?.srcSystem ?? '??';
+      const key = `${id}_${name}_${srcComp}`;
+      const now = Date.now();
 
-    const formatted = formatFields(msg);
+      msgCounts[key] = (msgCounts[key] || 0) + 1;
+      const count = msgCounts[key];
 
-    if (!rows[key]) {
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td class="label" id="${key}_name">${name}</td>
-        <td id="${key}_comp">${srcComp}</td>
-        <td class="timestamp" id="${key}_time">${timestamp}</td>
-        <td><pre id="${key}_data">${formatted}</pre></td>
-        <td id="${key}_count">${count}</td>
-      `;
-      msgTable.appendChild(row);
-      rows[key] = true;
-    } else {
-      console.log(key)
-      document.getElementById(`${key}_time`).textContent = timestamp;
-      document.getElementById(`${key}_data`).textContent = formatted;
-      document.getElementById(`${key}_count`).textContent = count;
+      // Calculate rate
+      if (!lastTimestamps[key]) lastTimestamps[key] = [];
+      const times = lastTimestamps[key];
+      times.push(now);
+      if (times.length > 20) times.shift(); // moving window
+      if (times.length > 1) {
+        const dt = (times[times.length - 1] - times[0]) / 1000;
+        msgRates[key] = (times.length - 1) / dt;
+      }
+
+      const rate = msgRates[key] ? msgRates[key].toFixed(1) : '—';
+      const formatted = formatFields(msg);
+      const timestamp = new Date().toLocaleTimeString();
+
+      if (!rows[key]) {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td class="label" id="${key}_name">${name}</td>
+          <td id="${key}_sys">${sysId}</td>
+          <td id="${key}_comp">${srcComp}</td>
+          <td class="timestamp" id="${key}_time">${timestamp}</td>
+          <td><pre id="${key}_data">${formatted}</pre></td>
+          <td id="${key}_count">${count} <span style="color:#0f0;">(${rate} Hz)</span></td>
+        `;
+        msgTable.appendChild(row);
+        rows[key] = row;
+      } else {
+        document.getElementById(`${key}_time`).textContent = timestamp;
+        document.getElementById(`${key}_data`).textContent = formatted;
+        document.getElementById(`${key}_count`).innerHTML = `${count} <span style="color:#0f0;">(${rate} Hz)</span>`;
+      }
+
+      applyFilters();
+    };
+
+    // === FILTERING ===
+    document.getElementById('filterInput').addEventListener('input', () => {
+      currentFilter = filterInput.value.toLowerCase();
+      applyFilters();
+    });
+
+    document.getElementById('compFilterInput').addEventListener('input', () => {
+      const val = compFilterInput.value.trim();
+      compFilterList = val ? val.split(/[\s,;]+/).map(v => v.trim()) : [];
+      applyFilters();
+    });
+
+    function applyFilters() {
+      const allRows = document.querySelectorAll('#msgTable tr');
+      allRows.forEach(row => {
+        const nameCell = row.querySelector('td.label');
+        const compCell = row.querySelector('td:nth-child(3)');
+        if (!nameCell || !compCell) return;
+
+        const nameMatch = nameCell.textContent.toLowerCase().includes(currentFilter);
+        const compVal = compCell.textContent.trim();
+        const compMatch = compFilterList.length === 0 || compFilterList.includes(compVal);
+
+        row.style.display = nameMatch && compMatch ? '' : 'none';
+      });
     }
 
-    // Apply filter to this specific row
-    const rowEl = document.getElementById(`${key}_name`)?.parentElement;
-    if (rowEl) {
+    // === SORTING ===
+    const headers = document.querySelectorAll('th.sortable');
+    headers.forEach(header => {
+      header.addEventListener('click', () => {
+        const key = header.dataset.key;
+        if (sortKey === key) sortDirection *= -1;
+        else {
+          sortKey = key;
+          sortDirection = 1;
+        }
+        updateSortArrows();
+        sortTable(key, sortDirection);
+      });
+    });
 
-      const nameText = name.toLowerCase();
-      const shouldShow = nameText.includes(currentFilter);
-      rowEl.style.display = shouldShow ? '' : 'none';
+    function sortTable(key, direction) {
+      const rowsArr = Array.from(msgTable.rows);
+      rowsArr.sort((a, b) => {
+        const aVal = getCellValue(a, key);
+        const bVal = getCellValue(b, key);
+
+        if (!isNaN(aVal) && !isNaN(bVal)) return (aVal - bVal) * direction;
+        return aVal.toString().localeCompare(bVal.toString()) * direction;
+      });
+
+      rowsArr.forEach(r => msgTable.appendChild(r));
     }
-  };
 
-  filterInput.addEventListener('input', () => {
-  currentFilter = filterInput.value.toLowerCase();
-  applyFilterToTable();
-});
+    function getCellValue(row, key) {
+      switch (key) {
+        case 'name': return row.cells[0].textContent;
+        case 'sys': return parseInt(row.cells[1].textContent) || 0;
+        case 'comp': return parseInt(row.cells[2].textContent) || 0;
+        case 'time': return row.cells[3].textContent;
+        case 'count': return parseInt(row.cells[5].textContent) || 0;
+        default: return '';
+      }
+    }
 
-function applyFilterToTable() {
-  const rows = document.querySelectorAll('#msgTable tr');
-
-  rows.forEach(row => {
-    const nameCell = row.querySelector('td.label');
-    if (!nameCell) return;
-
-    const name = nameCell.textContent.toLowerCase();
-    const match = name.includes(currentFilter);
-    row.style.display = match ? '' : 'none';
-  });
-}
-</script>
-
+    function updateSortArrows() {
+      document.querySelectorAll('.arrow').forEach(a => a.textContent = '');
+      const active = document.querySelector(`th[data-key="${sortKey}"] .arrow`);
+      if (active) active.textContent = sortDirection === 1 ? '▲' : '▼';
+    }
+  </script>
 </body>
 </html>
