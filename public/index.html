@@ -60,6 +60,18 @@
       color: #eee;
       border: 1px solid #333;
     }
+    .sys-filter {
+      margin-bottom: 1em;
+    }
+    .sys-filter label {
+      margin-right: 1em;
+      cursor: pointer;
+    }
+    .sys-filter input {
+      transform: scale(1.2);
+      margin-right: 5px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -78,6 +90,9 @@
     placeholder="🧩 Filter by component IDs (e.g. 1, 2, 3)"
     style="width: 300px;"
   />
+
+  <!-- Dynamic System ID Filters -->
+  <div id="systemFilter" class="sys-filter"></div>
 
   <table>
     <thead>
@@ -98,21 +113,25 @@
   <script>
     const ws = new WebSocket('ws://127.0.0.1:3001');
     const msgTable = document.getElementById('msgTable');
+    const systemFilterContainer = document.getElementById('systemFilter');
     const rows = {};
     const msgCounts = {};
     const lastTimestamps = {};
     const msgRates = {};
+    const sysIds = new Set();
+    const sysFilters = {}; // sysId -> boolean (checked or not)
 
     let currentFilter = '';
     let compFilterList = [];
     let sortKey = '';
-    let sortDirection = 1; // 1 = asc, -1 = desc
+    let sortDirection = 1;
 
     function formatFields(msg) {
       const fields = msg.fieldnames || [];
       return fields.map(field => `${field}: ${msg[field]}`).join('\n');
     }
 
+    // === WebSocket Handler ===
     ws.onmessage = (event) => {
       let msg;
       try {
@@ -129,14 +148,21 @@
       const key = `${id}_${name}_${srcComp}`;
       const now = Date.now();
 
+      // Register system ID filter if new
+      if (!sysIds.has(sysId)) {
+        sysIds.add(sysId);
+        sysFilters[sysId] = true;
+        addSystemCheckbox(sysId);
+      }
+
       msgCounts[key] = (msgCounts[key] || 0) + 1;
       const count = msgCounts[key];
 
-      // Calculate rate
+      // Calculate message rate
       if (!lastTimestamps[key]) lastTimestamps[key] = [];
       const times = lastTimestamps[key];
       times.push(now);
-      if (times.length > 20) times.shift(); // moving window
+      if (times.length > 20) times.shift();
       if (times.length > 1) {
         const dt = (times[times.length - 1] - times[0]) / 1000;
         msgRates[key] = (times.length - 1) / dt;
@@ -161,11 +187,30 @@
       } else {
         document.getElementById(`${key}_time`).textContent = timestamp;
         document.getElementById(`${key}_data`).textContent = formatted;
-        document.getElementById(`${key}_count`).innerHTML = `${count} <span style="color:#0f0;">(${rate} Hz)</span>`;
+        document.getElementById(`${key}_count`).innerHTML =
+          `${count} <span style="color:#0f0;">(${rate} Hz)</span>`;
       }
 
       applyFilters();
     };
+
+    // === Add checkbox dynamically for new System ID ===
+    function addSystemCheckbox(sysId) {
+      const label = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = true;
+      checkbox.dataset.sysid = sysId;
+
+      checkbox.addEventListener('change', () => {
+        sysFilters[sysId] = checkbox.checked;
+        applyFilters();
+      });
+
+      label.appendChild(checkbox);
+      label.append(`Sys ${sysId}`);
+      systemFilterContainer.appendChild(label);
+    }
 
     // === FILTERING ===
     document.getElementById('filterInput').addEventListener('input', () => {
@@ -183,14 +228,17 @@
       const allRows = document.querySelectorAll('#msgTable tr');
       allRows.forEach(row => {
         const nameCell = row.querySelector('td.label');
+        const sysCell = row.querySelector('td:nth-child(2)');
         const compCell = row.querySelector('td:nth-child(3)');
-        if (!nameCell || !compCell) return;
+        if (!nameCell || !sysCell || !compCell) return;
 
         const nameMatch = nameCell.textContent.toLowerCase().includes(currentFilter);
         const compVal = compCell.textContent.trim();
         const compMatch = compFilterList.length === 0 || compFilterList.includes(compVal);
+        const sysVal = sysCell.textContent.trim();
+        const sysMatch = sysFilters[sysVal] ?? true;
 
-        row.style.display = nameMatch && compMatch ? '' : 'none';
+        row.style.display = (nameMatch && compMatch && sysMatch) ? '' : 'none';
       });
     }
 
@@ -214,11 +262,9 @@
       rowsArr.sort((a, b) => {
         const aVal = getCellValue(a, key);
         const bVal = getCellValue(b, key);
-
         if (!isNaN(aVal) && !isNaN(bVal)) return (aVal - bVal) * direction;
         return aVal.toString().localeCompare(bVal.toString()) * direction;
       });
-
       rowsArr.forEach(r => msgTable.appendChild(r));
     }
 
